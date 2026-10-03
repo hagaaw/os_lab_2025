@@ -22,8 +22,6 @@ int main(int argc, char **argv) {
   bool with_files = false;
 
   while (true) {
-    int current_optind = optind ? optind : 1;
-
     static struct option options[] = {{"seed", required_argument, 0, 0},
                                       {"array_size", required_argument, 0, 0},
                                       {"pnum", required_argument, 0, 0},
@@ -40,34 +38,25 @@ int main(int argc, char **argv) {
         switch (option_index) {
           case 0:
             seed = atoi(optarg);
-            // your code here
-            // error handling
             break;
           case 1:
             array_size = atoi(optarg);
-            // your code here
-            // error handling
             break;
           case 2:
             pnum = atoi(optarg);
-            // your code here
-            // error handling
             break;
           case 3:
             with_files = true;
             break;
-
-          defalut:
+          default:
             printf("Index %d is out of options\n", option_index);
         }
         break;
       case 'f':
         with_files = true;
         break;
-
       case '?':
         break;
-
       default:
         printf("getopt returned character code 0%o?\n", c);
     }
@@ -91,24 +80,65 @@ int main(int argc, char **argv) {
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
 
+  // трубы: на каждый процесс по 2 (для min и max)
+  int pipes[2 * pnum][2];
+
+  
+  if (!with_files) {
+    for (int i = 0; i < pnum; i++) {
+      if (pipe(pipes[2 * i]) == -1 || pipe(pipes[2 * i + 1]) == -1) {
+        perror("pipe");
+        return 1;
+      }
+    }
+  }
+
   for (int i = 0; i < pnum; i++) {
     pid_t child_pid = fork();
-    if (child_pid >= 0) {
-      // successful fork
-      active_child_processes += 1;
-      if (child_pid == 0) {
-        // child process
 
-        // parallel somehow
+    if (child_pid == 0) {
+      // === РЕБЁНОК ===
 
-        if (with_files) {
-          // use files here
-        } else {
-          // use pipe here
-        }
-        return 0;
+      // параллельно считаем min/max на своём куске массива
+      int start = i * array_size / pnum;
+      int end = (i + 1) * array_size / pnum;
+      struct MinMax mm = GetMinMax(array, start, end);
+
+      if (with_files) {
+        // пишем в файлы
+        char filename[64];
+        FILE *f;
+
+        sprintf(filename, "min_%d.txt", i);
+        f = fopen(filename, "w");
+        fprintf(f, "%d", mm.min);
+        fclose(f);
+        
+        sprintf(filename, "max_%d.txt", i);
+        f = fopen(filename, "w");
+        fprintf(f, "%d", mm.max);
+        fclose(f);
+      } else {
+       
+        close(pipes[2 * i][0]);
+        close(pipes[2 * i + 1][0]);
+        write(pipes[2 * i][1], &mm.min, sizeof(int));
+        write(pipes[2 * i + 1][1], &mm.max, sizeof(int));
+        close(pipes[2 * i][1]);
+        close(pipes[2 * i + 1][1]);
       }
 
+      free(array);
+      return 0;
+    } else if (child_pid > 0) {
+      // === РОДИТЕЛЬ ===
+      active_child_processes += 1;
+
+      if (!with_files) {
+   
+        close(pipes[2 * i][1]);
+        close(pipes[2 * i + 1][1]);
+      }
     } else {
       printf("Fork failed!\n");
       return 1;
@@ -116,8 +146,7 @@ int main(int argc, char **argv) {
   }
 
   while (active_child_processes > 0) {
-    // your code here
-
+    wait(NULL);
     active_child_processes -= 1;
   }
 
@@ -130,9 +159,27 @@ int main(int argc, char **argv) {
     int max = INT_MIN;
 
     if (with_files) {
-      // read from files
+      char filename[64];
+      FILE *f;
+
+      sprintf(filename, "min_%d.txt", i);
+      f = fopen(filename, "r");
+      fscanf(f, "%d", &min);
+      fclose(f);
+
+      sprintf(filename, "max_%d.txt", i);
+      f = fopen(filename, "r");
+      fscanf(f, "%d", &max);
+      fclose(f);
+
+      remove(filename); 
+      sprintf(filename, "min_%d.txt", i);
+      remove(filename);
     } else {
-      // read from pipes
+      read(pipes[2 * i][0], &min, sizeof(int));
+      read(pipes[2 * i + 1][0], &max, sizeof(int));
+      close(pipes[2 * i][0]);
+      close(pipes[2 * i + 1][0]);
     }
 
     if (min < min_max.min) min_max.min = min;
