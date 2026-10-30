@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  /* --- Генерация массива (НЕ входит в замер) --- */
+  
   int *array = malloc(sizeof(int) * array_size);
   if (!array) {
     printf("Ошибка malloc\n");
